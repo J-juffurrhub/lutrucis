@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aventura Colaborativa</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Dark background */
+            color: #e2e8f0; /* Light text */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+        }
+
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding: 1.5rem;
+            background-color: #2d3748; /* Slightly lighter dark background */
+            border-radius: 1rem; /* Rounded corners */
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 1200px; /* Max width for larger screens */
+            box-sizing: border-box;
+        }
+
+        #game-area {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            flex-grow: 1; /* Allows it to take available space */
+        }
+
+        canvas {
+            background-color: #5a67d8; /* Game background color (e.g., sky blue) */
+            border: 4px solid #4c51bf; /* Border for the game canvas */
+            border-radius: 0.75rem;
+            display: block;
+            width: 100%; /* Fluid width */
+            height: 500px; /* Fixed height for now, can be responsive */
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #ui-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            background-color: #4a5568; /* UI panel background */
+            padding: 1rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        #chat-box {
+            height: 150px;
+            overflow-y: auto;
+            background-color: #2d3748;
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            font-size: 0.875rem;
+            line-height: 1.4;
+            color: #cbd5e0;
+            border: 1px solid #4a5568;
+        }
+
+        #chat-input-container {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        #chat-input {
+            flex-grow: 1;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid #6b7280;
+            background-color: #2d3748;
+            color: #e2e8f0;
+            outline: none;
+        }
+
+        #chat-input::placeholder {
+            color: #a0aec0;
+        }
+
+        #player-list {
+            height: 100px;
+            overflow-y: auto;
+            background-color: #2d3748;
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            font-size: 0.875rem;
+            color: #cbd5e0;
+            border: 1px solid #4a5568;
+        }
+
+        .player-item {
+            padding: 0.25rem 0;
+            border-bottom: 1px dashed #4a5568;
+        }
+
+        .player-item:last-child {
+            border-bottom: none;
+        }
+
+        .btn {
+            background-color: #667eea; /* Blue button */
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            font-weight: bold;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+        }
+
+        .btn:hover {
+            background-color: #5a67d8;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            background-color: #4c51bf;
+            transform: translateY(0);
+        }
+
+        /* Responsive adjustments */
+        @media (min-width: 768px) {
+            #game-container {
+                flex-direction: row;
+                max-height: 90vh; /* Limit height on larger screens */
+            }
+            #game-area {
+                flex-basis: 70%; /* Game takes more space */
+            }
+            #ui-panel {
+                flex-basis: 30%; /* UI panel takes less space */
+            }
+        }
+    </style>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, addDoc, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase instances
+        let app;
+        let db;
+        let auth;
+        let userId; // Current user's ID
+        let playersRef; // Reference to the players collection
+        let messagesRef; // Reference to the messages collection
+
+        // Game state variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const playerSize = 30;
+        let playerX = 50;
+        let playerY = 50;
+        let playerVelX = 0;
+        let playerVelY = 0;
+        const gravity = 0.5;
+        const jumpStrength = -10;
+        let onGround = false;
+        let keys = {};
+
+        // Other players' data
+        let otherPlayers = {};
+
+        // Game map (simple platforms and a goal)
+        const platforms = [
+            { x: 0, y: canvas.height - 50, width: canvas.width, height: 50 }, // Ground
+            { x: 150, y: canvas.height - 150, width: 200, height: 20 },
+            { x: 400, y: canvas.height - 250, width: 150, height: 20 },
+            { x: 600, y: canvas.height - 100, width: 100, height: 20 },
+            { x: 800, y: canvas.height - 350, width: 150, height: 20 },
+            { x: 200, y: canvas.height - 300, width: 100, height: 20 },
+        ];
+
+        const goal = { x: canvas.width - 70, y: canvas.height - 100, width: 50, height: 50 }; // Goal area
+
+        // UI elements
+        const chatBox = document.getElementById('chat-box');
+        const chatInput = document.getElementById('chat-input');
+        const playerListElement = document.getElementById('player-list');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        // --- Firebase Initialization and Authentication ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+
+        // Authenticate user
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                console.log("Authenticated with Firebase. User ID:", userId);
+                userIdDisplay.textContent = `Seu ID: ${userId}`;
+
+                // Set up Firestore references
+                playersRef = collection(db, `artifacts/${appId}/public/data/players`);
+                messagesRef = collection(db, `artifacts/${appId}/public/data/messages`);
+
+                // Set initial player data in Firestore
+                await setDoc(doc(playersRef, userId), {
+                    x: playerX,
+                    y: playerY,
+                    lastUpdate: serverTimestamp(),
+                    color: getRandomColor() // Assign a random color to the player
+                }, { merge: true }); // Use merge to avoid overwriting existing data
+
+                // Start listening for real-time updates
+                listenForPlayerUpdates();
+                listenForChatMessages();
+
+                // Start game loop only after authentication
+                animate();
+
+            } else {
+                // Sign in anonymously if not authenticated
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                console.log("Attempting anonymous sign-in...");
+            }
+        });
+
+        // --- Game Logic ---
+
+        function getRandomColor() {
+            const letters = '0123456789ABCDEF';
+            let color = '#';
+            for (let i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)];
+            }
+            return color;
+        }
+
+        function updatePlayerPosition() {
+            playerVelY += gravity;
+            playerX += playerVelX;
+            playerY += playerVelY;
+
+            onGround = false; // Reset ground state
+
+            // Collision with platforms
+            platforms.forEach(platform => {
+                // Check for collision from above
+                if (playerY + playerSize > platform.y && playerY < platform.y + platform.height &&
+                    playerX + playerSize > platform.x && playerX < platform.x + platform.width) {
+
+                    // If falling and hit top of platform
+                    if (playerVelY > 0 && playerY + playerSize - playerVelY <= platform.y) {
+                        playerY = platform.y - playerSize;
+                        playerVelY = 0;
+                        onGround = true;
+                    }
+                    // If moving left and hit right of platform
+                    else if (playerVelX < 0 && playerX < platform.x + platform.width && playerX + playerSize > platform.x + platform.width) {
+                        playerX = platform.x + platform.width;
+                        playerVelX = 0;
+                    }
+                    // If moving right and hit left of platform
+                    else if (playerVelX > 0 && playerX + playerSize > platform.x && playerX < platform.x) {
+                        playerX = platform.x - playerSize;
+                        playerVelX = 0;
+                    }
+                    // If jumping and hit bottom of platform
+                    else if (playerVelY < 0 && playerY < platform.y + platform.height && playerY + playerSize > platform.y + platform.height) {
+                        playerY = platform.y + platform.height;
+                        playerVelY = 0;
+                    }
+                }
+            });
+
+            // Keep player within canvas bounds
+            if (playerX < 0) playerX = 0;
+            if (playerX + playerSize > canvas.width) playerX = canvas.width - playerSize;
+            if (playerY + playerSize > canvas.height) {
+                playerY = canvas.height - playerSize;
+                playerVelY = 0;
+                onGround = true;
+            }
+
+            // Update player velocity based on keys
+            playerVelX = 0;
+            if (keys['ArrowLeft'] || keys['a']) playerVelX = -5;
+            if (keys['ArrowRight'] || keys['d']) playerVelX = 5;
+
+            // Update player position in Firestore
+            if (userId) {
+                updateDoc(doc(playersRef, userId), {
+                    x: playerX,
+                    y: playerY,
+                    lastUpdate: serverTimestamp()
+                }).catch(error => console.error("Error updating player position:", error));
+            }
+        }
+
+        function drawPlayer(x, y, color, isLocalPlayer = false) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, playerSize, playerSize);
+            ctx.strokeStyle = isLocalPlayer ? 'yellow' : 'black';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, playerSize, playerSize);
+
+            // Draw player ID above the player for other players
+            if (!isLocalPlayer) {
+                ctx.fillStyle = 'white';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(getShortId(userId), x + playerSize / 2, y - 5);
+            }
+        }
+
+        function drawMap() {
+            ctx.fillStyle = '#4CAF50'; // Platform color
+            platforms.forEach(p => {
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+            });
+
+            // Draw goal
+            ctx.fillStyle = '#FFD700'; // Gold color for goal
+            ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('META', goal.x + goal.width / 2, goal.y + goal.height / 2 + 5);
+        }
+
+        function checkGoalCollision() {
+            if (playerX < goal.x + goal.width &&
+                playerX + playerSize > goal.x &&
+                playerY < goal.y + goal.height &&
+                playerY + playerSize > goal.y) {
+                // Player reached the goal
+                console.log("Parabéns! Você alcançou a meta!");
+                // Here you can add logic for next level, score, etc.
+                // For now, just display a message
+                addChatMessage("Sistema", `🎉 ${getShortId(userId)} alcançou a meta!`);
+                // Optionally, reset player position or move to next level
+                playerX = 50;
+                playerY = 50;
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+            drawMap();
+            updatePlayerPosition();
+            drawPlayer(playerX, playerY, otherPlayers[userId]?.color || 'white', true); // Draw local player
+
+            // Draw other players
+            for (const id in otherPlayers) {
+                if (id !== userId) {
+                    const player = otherPlayers[id];
+                    drawPlayer(player.x, player.y, player.color || 'gray');
+                }
+            }
+            checkGoalCollision();
+        }
+
+        function animate() {
+            gameLoop();
+            requestAnimationFrame(animate);
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && onGround) {
+                playerVelY = jumpStrength;
+                onGround = false; // Player is now in the air
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Chat send button
+        document.getElementById('send-chat-btn').addEventListener('click', () => {
+            const message = chatInput.value.trim();
+            if (message && userId) {
+                addDoc(messagesRef, {
+                    senderId: userId,
+                    senderName: getShortId(userId), // Display a shorter ID in chat
+                    message: message,
+                    timestamp: serverTimestamp()
+                }).then(() => {
+                    chatInput.value = ''; // Clear input
+                    chatBox.scrollTop = chatBox.scrollHeight; // Scroll to bottom
+                }).catch(error => console.error("Error sending message:", error));
+            }
+        });
+
+        // Allow sending chat with Enter key
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('send-chat-btn').click();
+            }
+        });
+
+        // --- Firebase Real-time Listeners ---
+
+        function listenForPlayerUpdates() {
+            onSnapshot(playersRef, (snapshot) => {
+                const updatedPlayers = {};
+                const currentPlayersInList = new Set();
+
+                snapshot.forEach(doc => {
+                    const playerData = doc.data();
+                    updatedPlayers[doc.id] = {
+                        id: doc.id,
+                        x: playerData.x,
+                        y: playerData.y,
+                        color: playerData.color || 'gray',
+                        lastUpdate: playerData.lastUpdate?.toDate() // Convert timestamp to Date object
+                    };
+                    currentPlayersInList.add(doc.id);
+                });
+
+                otherPlayers = updatedPlayers;
+                updatePlayerList(currentPlayersInList);
+            }, (error) => {
+                console.error("Error listening to player updates:", error);
+            });
+        }
+
+        function listenForChatMessages() {
+            const q = query(messagesRef); // No orderBy to avoid index issues
+            onSnapshot(q, (snapshot) => {
+                chatBox.innerHTML = ''; // Clear existing messages
+                const messages = [];
+                snapshot.forEach(doc => {
+                    const msg = doc.data();
+                    messages.push(msg);
+                });
+
+                // Sort messages by timestamp client-side
+                messages.sort((a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0));
+
+                messages.forEach(msg => {
+                    addChatMessage(msg.senderName, msg.message, msg.senderId === userId);
+                });
+                chatBox.scrollTop = chatBox.scrollHeight; // Scroll to bottom
+            }, (error) => {
+                console.error("Error listening to chat messages:", error);
+            });
+        }
+
+        function addChatMessage(sender, message, isLocalUser = false) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('mb-1');
+            messageElement.innerHTML = `<span class="font-bold ${isLocalUser ? 'text-yellow-300' : 'text-blue-300'}">${sender}:</span> ${message}`;
+            chatBox.appendChild(messageElement);
+        }
+
+        function updatePlayerList(activePlayerIds) {
+            playerListElement.innerHTML = ''; // Clear existing list
+            for (const id in otherPlayers) {
+                if (activePlayerIds.has(id)) { // Only show players currently in the snapshot
+                    const playerItem = document.createElement('div');
+                    playerItem.classList.add('player-item');
+                    const shortId = getShortId(id);
+                    const isCurrentUser = id === userId;
+                    playerItem.innerHTML = `<span style="color: ${otherPlayers[id].color};">&#9632;</span> ${shortId} ${isCurrentUser ? '(Você)' : ''}`;
+                    playerListElement.appendChild(playerItem);
+                }
+            }
+        }
+
+        function getShortId(fullId) {
+            return fullId ? fullId.substring(0, 6) : 'Desconhecido';
+        }
+
+        // Clean up player data when user leaves (best effort, not guaranteed)
+        window.addEventListener('beforeunload', async () => {
+            if (userId && playersRef) {
+                try {
+                    await deleteDoc(doc(playersRef, userId));
+                    console.log("Player data removed from Firestore.");
+                } catch (error) {
+                    console.error("Error removing player data on unload:", error);
+                }
+            }
+        });
+
+        // Ensure canvas dimensions are set on load
+        window.onload = function() {
+            // No need to set canvas width/height explicitly if using CSS width:100% and fixed height
+            // The game logic will adapt to the CSS dimensions.
+            // If you need to dynamically set canvas resolution, you'd do it here:
+            // canvas.width = canvas.offsetWidth;
+            // canvas.height = canvas.offsetHeight;
+            // Then redraw
+        };
+
+    </script>
+</head>
+<body>
+    <div id="game-container" class="rounded-2xl shadow-xl">
+        <div id="game-area">
+            <h1 class="text-3xl font-bold text-center mb-4 text-white">Aventura Colaborativa</h1>
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        <div id="ui-panel" class="rounded-xl shadow-md">
+            <h2 class="text-xl font-bold text-white mb-2">Informações do Jogo</h2>
+            <div id="user-id-display" class="text-sm text-gray-400 mb-4 rounded-md p-2 bg-gray-700">Seu ID: Carregando...</div>
+
+            <h3 class="text-lg font-semibold text-white mb-2">Jogadores Online:</h3>
+            <div id="player-list" class="rounded-md border border-gray-600 p-2 text-sm">
+                <!-- Player list will be populated by JS -->
+                Nenhum jogador online.
+            </div>
+
+            <h3 class="text-lg font-semibold text-white mt-4 mb-2">Chat:</h3>
+            <div id="chat-box" class="rounded-md border border-gray-600 p-2 text-sm">
+                <!-- Chat messages will be populated by JS -->
+            </div>
+            <div id="chat-input-container" class="mt-2">
+                <input type="text" id="chat-input" placeholder="Digite sua mensagem..." class="rounded-md border border-gray-600 bg-gray-700 text-white px-3 py-2 flex-grow">
+                <button id="send-chat-btn" class="btn">Enviar</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
