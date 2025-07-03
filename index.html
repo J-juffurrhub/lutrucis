@@ -191,7 +191,8 @@
 
         // --- Firebase Initialization and Authentication ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // Improved parsing for firebaseConfig
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' && __firebase_config !== '' ? __firebase_config : '{}');
 
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
@@ -208,29 +209,45 @@
                 playersRef = collection(db, `artifacts/${appId}/public/data/players`);
                 messagesRef = collection(db, `artifacts/${appId}/public/data/messages`);
 
-                // Set initial player data in Firestore
-                await setDoc(doc(playersRef, userId), {
-                    x: playerX,
-                    y: playerY,
-                    lastUpdate: serverTimestamp(),
-                    color: getRandomColor() // Assign a random color to the player
-                }, { merge: true }); // Use merge to avoid overwriting existing data
+                try {
+                    // Set initial player data in Firestore
+                    await setDoc(doc(playersRef, userId), {
+                        x: playerX,
+                        y: playerY,
+                        lastUpdate: serverTimestamp(),
+                        color: getRandomColor() // Assign a random color to the player
+                    }, { merge: true }); // Use merge to avoid overwriting existing data
+                    console.log("Initial player data set in Firestore.");
 
-                // Start listening for real-time updates
-                listenForPlayerUpdates();
-                listenForChatMessages();
+                    // Start listening for real-time updates
+                    listenForPlayerUpdates();
+                    listenForChatMessages();
+                    console.log("Firestore listeners started.");
 
-                // Start game loop only after authentication
-                animate();
+                    // Start game loop only after authentication
+                    animate();
+                    console.log("Game animation loop started.");
+
+                } catch (error) {
+                    console.error("Error during Firebase setup after authentication:", error);
+                    // Display an error message to the user if Firebase setup fails
+                    userIdDisplay.textContent = `Erro de Autenticação/Firebase: ${error.message}`;
+                }
 
             } else {
-                // Sign in anonymously if not authenticated
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
+                console.log("User not authenticated. Attempting anonymous sign-in...");
+                try {
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                        console.log("Signed in with custom token.");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    }
+                } catch (error) {
+                    console.error("Error during anonymous sign-in:", error);
+                    userIdDisplay.textContent = `Erro ao Entrar: ${error.message}`;
                 }
-                console.log("Attempting anonymous sign-in...");
             }
         });
 
@@ -515,12 +532,23 @@
             canvas.width = canvas.offsetWidth;
             canvas.height = canvas.offsetHeight;
             
+            console.log("Canvas dimensions set to:", canvas.width, "x", canvas.height); // Added log
+
             // Initialize game map elements after canvas dimensions are set
             initializeGameMap();
 
             // Redraw the map if needed after initialization (though animate() will do it soon)
             drawMap();
         };
+
+        // Add a resize listener to handle canvas resizing
+        window.addEventListener('resize', () => {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            console.log("Canvas resized to:", canvas.width, "x", canvas.height); // Added log
+            initializeGameMap(); // Re-initialize map based on new dimensions
+            drawMap(); // Redraw map
+        });
 
     </script>
 </head>
